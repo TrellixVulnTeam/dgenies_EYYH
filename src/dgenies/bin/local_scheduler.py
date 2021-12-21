@@ -8,6 +8,9 @@ from datetime import datetime
 from tendo import singleton
 import argparse
 
+import logging
+import dgenies.logging
+
 from dgenies.database import Job, Session
 from dgenies.config_reader import AppConfigReader
 from dgenies.lib.job_manager import JobManager
@@ -17,14 +20,21 @@ me = singleton.SingleInstance()
 
 config_reader = AppConfigReader()
 
+logger = logging.getLogger('local_scheduler')
+if config_reader.debug:
+    logger.setLevel(logging.DEBUG)
+
 # Add DRMAA lib in env:
 if config_reader.drmaa_lib_path is not None and config_reader.batch_system_type != "local":
+    logger.debug("Configuring DRMAA library")
     os.environ["DRMAA_LIBRARY_PATH"] = config_reader.drmaa_lib_path
     try:
         import drmaa
         from dgenies.lib.drmaasession import DrmaaSession
         DRMAA_SESSION = DrmaaSession()
+        logger.debug("DRMAA configured")
     except ImportError:
+        logger.warning("DRMAA missconfigured. Continue without using it")
         pass
 
 NB_RUN = config_reader.local_nb_runs
@@ -59,6 +69,7 @@ def start_job(id_job, batch_system_type="local"):
     :type batch_system_type: str
     """
     _printer("Start job", id_job)
+    logger.info("[job=%s] Starting job" % id_job)
     with Job.connect():
         job = Job.get(Job.id_job == id_job)
         job.status = "starting"
@@ -75,6 +86,7 @@ def get_scheduled_local_jobs():
     :return: list of jobs
     :rtype: list
     """
+    logger.debug("Look at scheduled local jobs")
     all_jobs = []
     with Job.connect():
         jobs = Job.select().where((Job.batch_type == "local") & ((Job.status == "prepared") | (Job.status == "scheduled"))).\
@@ -93,6 +105,7 @@ def get_scheduled_cluster_jobs():
     :return: list of jobs
     :rtype: list
     """
+    logger.debug("Look at scheduled cluster jobs")
     all_jobs = []
     with Job.connect():
         jobs = Job.select().where((Job.batch_type != "local") & ((Job.status == "prepared") | (Job.status == "scheduled"))).\
@@ -112,6 +125,7 @@ def prepare_job(id_job):
     :type id_job: str
     """
     _printer("Prepare data for job:", id_job)
+    logger.info("[job=%s] Preparing job" % id_job)
     with Job.connect():
         job = Job.get(Job.id_job == id_job)
         job.status = "preparing"
@@ -128,6 +142,7 @@ def get_prep_scheduled_jobs():
     :return: list of jobs
     :rtype: list
     """
+    logger.debug("Look at prepared scheduled jobs")
     with Job.connect():
         jobs = Job.select().where(Job.status == "waiting").order_by(Job.date_created)
         return [(j.id_job, j.batch_type) for j in jobs]
@@ -140,6 +155,7 @@ def get_preparing_jobs_nb():
     :return: number of jobs
     :rtype: int
     """
+    logger.debug("Get number of preparing jobs")
     with Job.connect():
         return len(Job.select().where(Job.status == "preparing"))
 
@@ -151,6 +167,7 @@ def get_preparing_jobs_cluster_nb():
     :return: number of jobs
     :rtype: int
     """
+    logger.debug("Get number of preparing cluster jobs")
     with Job.connect():
         return len(Job.select().where(Job.status == "preparing-cluster")), \
                len(Job.select().where(Job.status == "prepare-scheduled"))
@@ -163,6 +180,7 @@ def parse_started_jobs():
     :return: (list of id of jobs started locally, list of id of jobs started on cluster)
     :rtype: (list, list)
     """
+    logger.debug("Get number of started jobs")
     with Job.connect():
         jobs_started = []  # Only local jobs
         cluster_jobs_started = []  # Only cluster jobs
@@ -175,6 +193,7 @@ def parse_started_jobs():
                 if job.status != "started" or psutil.pid_exists(pid):
                     jobs_started.append(job.id_job)
                 else:
+                    logger.error("[job=%s] Job has failed for an unexpected reason (local pid: %d)" % (job.id_job, job.id_process))
                     print("Job %s (pid: %d) has died!" % (job.id_job, job.id_process))
                     job.status = "fail"
                     job.error = "<p>Your job has failed for an unexpected reason. Please contact the support.</p>"
@@ -191,6 +210,8 @@ def parse_started_jobs():
                             os.system("scancel %s" % job.id_process)
                         elif job.batch_type == "sge":
                             os.system("qdel %s" % job.id_process)
+                        logger.error("[job=%s] Job has failed for an unexpected reason (cluster job id: %d)" % (
+                        job.id_job, job.id_process))
                         print("Job %s (id on cluster: %d) has died!" % (job.id_job, job.id_process))
                         job.status = "fail"
                         job.error = "<p>Your job has failed for an unexpected reason. Please contact the support.</p>"
@@ -221,33 +242,41 @@ def parse_uploads_asks():
         all_sessions = Session.select()
         nb_sessions = len(all_sessions)
         _printer("All sessions:", nb_sessions)
+        logger.info("- All sessions: %d" % nb_sessions)
         sessions = Session.select().where(Session.status == "active")
         nb_active_dl = len(sessions)
         _printer("Active_dl:", nb_active_dl)
+        logger.info("- Active downloads: %d" % nb_active_dl)
         for session in sessions:
             if not session.keep_active and (now - session.last_ping).total_seconds() > 50:
                 _printer("Delete 1 active session:", session.s_id)
+                logger.info("[session=%s] Delete active session" % session.s_id)
                 session.delete_instance()  # We consider the user has left
                 nb_active_dl -= 1
         # Get pending:
         sessions = Session.select().where(Session.status == "pending").order_by(Session.date_created)
         _printer("Pending:", len(sessions))
+        logger.info("- Pending sessions: %d" % len(sessions))
+
         for session in sessions:
             delay = (now - session.last_ping).total_seconds()
             if delay > 30:
                 session.status = "reset"  # Reset position, the user has probably left
                 session.save()
                 _printer("Reset 1 session:", session.s_id)
+                logger.info("[session=%s] Reset session" % session.s_id)
             elif nb_active_dl < config_reader.max_concurrent_dl:
                 session.status = "active"
                 session.save()
                 nb_active_dl += 1
                 _printer("Enable 1 session:", session.s_id)
+                logger.info("[session=%s] Enable session" % session.s_id)
         # Remove old sessions:
         for session in all_sessions:
             delay = (now - session.last_ping).total_seconds()
             if delay > 86400:  # Session has more than 1 day
                 _printer("Delete 1 outdated session:", session.s_id)
+                logger.info("[session=%s] Delete outdated session" % session.s_id)
                 session.delete_instance()  # Session has expired
 
 
@@ -268,6 +297,7 @@ def move_job_to_cluster(id_job):
     :return:
     """
     with Job.connect():
+        logger.debug("[job=%s] Move job to cluster" % id_job)
         job = Job.get(Job.id_job == id_job)
         job.batch_type = config_reader.batch_system_type
         job.save()
@@ -309,22 +339,31 @@ if __name__ == '__main__':
     parse_args()
 
     while True:
+        logger.info("--- Waking up ---")
         _printer("Check uploads...")
+        logger.info("Checking uploads...")
         parse_uploads_asks()
         _printer("")
         _printer("Checking jobs...")
+        logger.info("Checking jobs...")
         scheduled_jobs_local = get_scheduled_local_jobs()
         scheduled_jobs_cluster = get_scheduled_cluster_jobs()
         prep_scheduled_jobs = get_prep_scheduled_jobs()
         _printer("Waiting for preparing:", len(prep_scheduled_jobs))
+        logger.info("- Waiting for preparing: %d" % len(prep_scheduled_jobs))
         nb_preparing_jobs = get_preparing_jobs_nb()
         nb_preparing_jobs_cluster = get_preparing_jobs_cluster_nb()
         _printer("Preparing:", nb_preparing_jobs, "(local)", "".join([str(nb_preparing_jobs_cluster[0]),
                  "[", str(nb_preparing_jobs_cluster[1]), "]"]), "(cluster)")
+        logger.info("- Preparing jobs: local=%d; cluster=%d[%d]" % (nb_preparing_jobs,
+                                                                  nb_preparing_jobs_cluster[0],
+                                                                  nb_preparing_jobs_cluster[1]))
         _printer("Scheduled:", len(scheduled_jobs_local), "(local),", len(scheduled_jobs_cluster), "(cluster)")
+        logger.info("- Scheduled jobs: local=%d; cluster=%d" % (len(scheduled_jobs_local), len(scheduled_jobs_cluster)))
         started_jobs, cluster_started_jobs = parse_started_jobs()
         nb_started = len(started_jobs)
         _printer("Started:", nb_started, "(local),", len(cluster_started_jobs), "(cluster)")
+        logger.info("- Started jobs: local=%d; cluster=%d" % (nb_started, len(cluster_started_jobs)))
         nj = 0
         local_waiting_jobs = []
         while nj < len(prep_scheduled_jobs):
@@ -351,5 +390,6 @@ if __name__ == '__main__':
             start_job(job["job_id"], job["batch_type"])
         # Wait before return
         _printer("Sleeping...")
+        logger.info("--- Sleeping ---")
         time.sleep(15)
         _printer("\n")

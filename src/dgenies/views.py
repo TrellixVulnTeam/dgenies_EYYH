@@ -24,10 +24,14 @@ from markdown.extensions.tables import TableExtension
 import tarfile
 from xopen import xopen
 from jinja2 import Environment
+
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG if DEBUG else logging.INFO)
+
 if MODE == "webserver":
     from dgenies.database import Session, Gallery
     from peewee import DoesNotExist
-
 
 @app.context_processor
 def global_templates_variables():
@@ -124,17 +128,22 @@ def launch_analysis():
     """
     Launch the job
     """
+    s_id = request.form["s_id"]
     if MODE == "webserver":
         try:
             with Session.connect():
-                session = Session.get(s_id=request.form["s_id"])
+                logger.info("[session=%s] Session connected." % s_id)
+                session = Session.get(s_id=s_id)
         except DoesNotExist:
+            logger.warning("[session=%s] Session has expired." % s_id)
             return jsonify({"success": False, "errors": ["Session has expired. Please refresh the page and try again"]})
         upload_folder = session.upload_folder
+
         # Delete session:
         session.delete_instance()
     else:
-        upload_folder = request.form["s_id"]
+        upload_folder = s_id
+    logger.info("[session=%s] Upload folder: %s." % (s_id, upload_folder))
 
     id_job = request.form["id_job"]
     email = request.form["email"]
@@ -151,12 +160,15 @@ def launch_analysis():
     # Check form:
     form_pass = True
     errors = []
+    logger.info("[session=%s] Launch job %s" % (s_id, id_job))
 
     if alignfile is not None and alignfile_type is None:
+        logger.error("[job=%s] Server error: no alignfile_type in form" % id_job)
         errors.append("Server error: no alignfile_type in form. Please contact the support")
         form_pass = False
 
     if backup is not None and backup != "" and (backup_type is None or backup_type == ""):
+        logger.error("[job=%s] Server error: no backup_type in form" % id_job)
         errors.append("Server error: no backup_type in form. Please contact the support")
         form_pass = False
 
@@ -167,19 +179,23 @@ def launch_analysis():
     else:
         backup = None
         if file_target == "":
+            logger.error("[job=%s] No target fasta selected" % id_job)
             errors.append("No target fasta selected")
             form_pass = False
 
     if tool is not None and tool not in Tools().tools:
+        logger.error("[job=%s] Tool unavailable: %s" % (id_job, tool))
         errors.append("Tool unavailable: %s" % tool)
         form_pass = False
 
     if id_job == "":
+        logger.error("[job=%s] Id of job not given" % id_job)
         errors.append("Id of job not given")
         form_pass = False
 
     if MODE == "webserver":
         if email == "":
+            logger.error("[job=%s] Email not given" % id_job)
             errors.append("Email not given")
             form_pass = False
         elif not re.match(r"^.+@.+\..+$", email):
@@ -188,6 +204,7 @@ def launch_analysis():
             # The only constrains we set on the email address are:
             # - to have at least one @ in it, with something before and something after
             # - to have something.tdl syntax for email server, as it will be used over Internet (not mandatory in RFC)
+            logger.error("[job=%s] Email is invalid" % id_job)
             errors.append("Email is invalid")
             form_pass = False
 
@@ -200,6 +217,7 @@ def launch_analysis():
         while os.path.exists(os.path.join(APP_DATA, id_job)):
             id_job = id_job_orig + ("_%d" % i)
             i += 1
+            logger.info("[job=%s] new job %s" % (id_job_orig, id_job))
 
         folder_files = os.path.join(APP_DATA, id_job)
         os.makedirs(folder_files)
@@ -220,14 +238,16 @@ def launch_analysis():
                     if os.path.exists(query_path):
                         if " " in file_query:
                             new_query_path = os.path.join(app.config["UPLOAD_FOLDER"], upload_folder,
-                                                                       file_query.replace(" ", "_"))
+                                                          file_query.replace(" ", "_"))
                             shutil.move(query_path, new_query_path)
                             query_path = new_query_path
                     else:
+                        logger.error("[job=%s] Query file not correct" % id_job)
                         errors.append("Query file not correct!")
                         form_pass = False
                 else:
                     query_path = file_query
+            logger.info("[job=%s] Loading query file %s/%s" % (id_job, query_path, query_name))
             query = Fasta(name=query_name, path=query_path, type_f=file_query_type, example=example)
         example = False
         target = None
@@ -249,13 +269,16 @@ def launch_analysis():
                             shutil.move(target_path, new_target_path)
                             target_path = new_target_path
                     else:
+                        logger.error("[job=%s] Target file not correct" % id_job)
                         errors.append("Target file not correct!")
                         form_pass = False
                 else:
                     target_path = file_target
+            logger.info("[job=%s] Loading target file %s/%s" % (id_job, target_path, target_name))
             target = Fasta(name=target_name, path=target_path, type_f=file_target_type, example=example)
 
         if alignfile is not None and alignfile != "" and backup is not None:
+            logger.debug("[job=%s] Create %s file" % (id_job, ".align"))
             Path(os.path.join(folder_files, ".align")).touch()
 
         align = None
@@ -264,8 +287,10 @@ def launch_analysis():
             alignfile_path = os.path.join(app.config["UPLOAD_FOLDER"], upload_folder, alignfile) \
                 if alignfile_type == "local" else alignfile
             if alignfile_type == "local" and not os.path.exists(alignfile_path):
+                logger.error("[job=%s] Alignment file not correct" % id_job)
                 errors.append("Alignment file not correct!")
                 form_pass = False
+            logger.info("[job=%s] Loading align file %s/%s" % (id_job, alignfile_path, alignfile_name))
             align = Fasta(name=alignfile_name, path=alignfile_path, type_f=alignfile_type)
 
         bckp = None
@@ -274,8 +299,10 @@ def launch_analysis():
             backup_path = os.path.join(app.config["UPLOAD_FOLDER"], upload_folder, backup) \
                 if backup_type == "local" else backup
             if backup_type == "local" and not os.path.exists(backup_path):
+                logger.error("[job=%s] Backup file not correct" % id_job)
                 errors.append("Backup file not correct!")
                 form_pass = False
+            logger.info("[job=%s] Loading backup file %s/%s" % (id_job, backup_path, backup_name))
             bckp = Fasta(name=backup_name, path=backup_path, type_f=backup_type)
 
         if form_pass:
@@ -288,9 +315,12 @@ def launch_analysis():
                              backup=bckp,
                              mailer=mailer,
                              tool=tool)
+            logger.info("[job=%s] Launch job in %s mode" % (id_job, MODE))
             if MODE == "webserver":
+                logger.debug("[job=%s] webserver mode" % id_job)
                 job.launch()
             else:
+                logger.debug("[job=%s] standalone mode" % id_job)
                 job.launch_standalone()
             return jsonify({"success": True, "redirect": url_for(".status", id_job=id_job)})
     if not form_pass:
@@ -308,6 +338,7 @@ def status(id_job):
     """
     job = JobManager(id_job)
     j_status = job.status()
+    logger.debug("[job=%s] %s" % (id_job, j_status))
     mem_peak = j_status["mem_peak"] if "mem_peak" in j_status else None
     if mem_peak is not None:
         mem_peak = "%.1f G" % (mem_peak / 1024.0 / 1024.0)
@@ -345,6 +376,7 @@ def result(id_res):
     :type id_res: str
     """
     res_dir = os.path.join(APP_DATA, id_res)
+    logger.info("[job=%s] GET /result/%s" % (id_res, id_res))
     return render_template("result.html", id=id_res, menu="result", current_result=id_res,
                            is_gallery=Functions.is_in_gallery(id_res, MODE),
                            fasta_file=Functions.query_fasta_file_exists(res_dir))
@@ -356,6 +388,7 @@ def gallery():
     Gallery page
     """
     if MODE == "webserver":
+        logger.info("GET /gallery")
         return render_template("gallery.html", items=Functions.get_gallery_items(), menu="gallery")
     return abort(404)
 
@@ -368,6 +401,7 @@ def gallery_file(filename):
     :param filename: filename of the PNG file
     """
     if MODE == "webserver":
+        logger.info("GET /gallery/%s" % filename)
         try:
             return send_file(os.path.join(config_reader.app_data, "gallery", filename))
         except FileNotFoundError:

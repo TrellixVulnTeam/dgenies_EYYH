@@ -3,8 +3,13 @@ from dgenies import MODE
 import os
 from dgenies.config_reader import AppConfigReader
 from datetime import datetime
+import logging
+logger = logging.getLogger(__name__)
 
 config = AppConfigReader()
+
+if config.debug:
+    logger.setLevel(logging.DEBUG)
 
 if MODE == "webserver":
     from peewee import SqliteDatabase, Model, CharField, IntegerField, DateTimeField, BooleanField, MySQLDatabase, \
@@ -18,6 +23,7 @@ if MODE == "webserver":
     class MyRetryDB(RetryOperationalError, MySQLDatabase):
         pass
 
+    logger.info("Opening %s db %s" % (db_type, db_url))
 
     if db_type == "sqlite":
         db = SqliteDatabase(db_url)
@@ -25,6 +31,7 @@ if MODE == "webserver":
         db = MyRetryDB(host=config.database_url, port=config.database_port, user=config.database_user,
                        passwd=config.database_password, database=config.database_db)
     else:
+        logger.error("Unsupported database type %s" % db_type)
         raise Exception("Unsupported database type: " + db_type)
 
 
@@ -37,6 +44,7 @@ if MODE == "webserver":
 
         def __enter__(self):
             Database.nb_open += 1
+            logger.debug("Entering DB, concurrent access: %s" % Database.nb_open)
             try:
                 db.connect()
             except OperationalError:
@@ -44,6 +52,7 @@ if MODE == "webserver":
 
         def __exit__(self, exc_type, exc_val, exc_tb):
             Database.nb_open -= 1
+            logger.debug("Exiting DB: concurrent access: %s" % Database.nb_open)
             if Database.nb_open == 0:
                 db.close()
 
@@ -93,12 +102,14 @@ if MODE == "webserver":
             my_s_id = Functions.random_string(20)
             while len(cls.select().where(cls.s_id == my_s_id)) > 0:
                 my_s_id = Functions.random_string(20)
+            logger.debug("Creating a new DB entry: %s" % my_s_id)
             upload_folder = Functions.random_string(20)
             tmp_dir = config.upload_folder
             upload_folder_path = os.path.join(tmp_dir, upload_folder)
             while os.path.exists(upload_folder_path):
                 upload_folder = Functions.random_string(20)
                 upload_folder_path = os.path.join(tmp_dir, upload_folder)
+            logger.debug("Creating a new upload folder: %s" % upload_folder_path)
             cls.create(s_id=my_s_id, date_created=datetime.now(), upload_folder=upload_folder, last_ping=datetime.now(),
                        keep_active=keep_active)
             return my_s_id

@@ -6,6 +6,8 @@ from pathlib import Path
 from configparser import RawConfigParser, NoOptionError, NoSectionError
 from dgenies.lib.decorators import Singleton
 
+import logging
+logger = logging.getLogger(__name__)
 
 @Singleton
 class AppConfigReader:
@@ -49,6 +51,15 @@ class AppConfigReader:
                     setattr(self, attr[5:], attr_o())
                 except Exception as e:
                     print(e)
+
+        # Display config at startup with debug
+        if self.debug:
+            logger.setLevel(logging.DEBUG)
+        logger.debug("Loaded configuration:")
+        for attr in dir(self):
+            if not (attr.startswith("_") or "password" in attr):
+                attr_o = getattr(self, attr)
+                logger.debug("{} = {}".format(attr, attr_o))
 
     def _replace_vars(self, path, config=False):
         new_path = path.replace("###USER###", os.path.expanduser("~"))\

@@ -33,6 +33,12 @@ import io
 import binascii
 from dgenies.database import Job
 
+import logging
+logger = logging.getLogger(__name__)
+if DEBUG:
+    logger.setLevel(logging.DEBUG)
+
+
 if MODE == "webserver":
     from dgenies.database import Session, Gallery
     from peewee import DoesNotExist
@@ -823,6 +829,7 @@ class JobManager:
         :param error: error description (if any)
         :type error: str
         """
+        logger.debug("[job=%s] Set status to %s" % (self.id_job, status))
         if MODE == "webserver":
             job = Job.get(Job.id_job == self.id_job)
             job.status = status
@@ -840,12 +847,14 @@ class JobManager:
         :param max_upload_size_readable: max upload size human readable
         :return: (True if correct, True if error set [for fail], True if should be local)
         """
+        logger.debug("[job=%s] Checking %s file" % (self.id_job, input_type))
         if input_type == "target" and self.query is None:
             max_upload_size_readable = self.config.max_upload_size_ava / 1024 / 1024
         with Job.connect():
             my_input = getattr(self, input_type)
             if my_input.get_path().endswith(".gz") and not self.is_gz_file(my_input.get_path()):
                 # Check file is correctly gzipped
+                logger.warning("[job=%s] %s file %s is not a correct gzip file" % (self.id_job, input_type, my_input.get_path()))
                 self.set_job_status("fail", input_type + " file is not a correct gzip file")
                 self.clear()
                 return False, True, None
@@ -853,6 +862,9 @@ class JobManager:
             file_size = self.get_file_size(my_input.get_path())
             if -1 < (self.config.max_upload_size if (input_type == "query" or self.query is not None)
                      else self.config.max_upload_size_ava) < file_size:
+                logger.warning("[job=%s] %s file %s exceed uncompressed size limit (%d Mb)" %
+                               (self.id_job, input_type, my_input.get_path(), max_upload_size_readable))
+
                 self.set_job_status("fail",
                                     input_type +
                                     " file exceed size limit of %d Mb (uncompressed)" % max_upload_size_readable)
@@ -861,14 +873,20 @@ class JobManager:
 
             if input_type == "align":
                 if not hasattr(validators, self.aln_format):
+                    logger.warning("[job=%s] alignment file %s is not a supported format" %
+                                   (self.id_job, my_input.get_path()))
                     self.set_job_status("fail", "Alignment file format not supported")
                     return False, True, None
                 if not getattr(validators, self.aln_format)(self.align.get_path()):
+                    logger.warning("[job=%s] alignment file %s is invalid" %
+                                   (self.id_job, my_input.get_path()))
                     self.set_job_status("fail", "Alignment file is invalid. Please check your file.")
                     return False, True, None
             elif input_type != "backup":
                 if my_input.get_path().endswith(".idx"):
                     if not validators.v_idx(my_input.get_path()):
+                        logger.warning("[job=%s] index file %s is invalid" %
+                                       (self.id_job, my_input.get_path()))
                         self.set_job_status("fail",
                                             "%s index file is invalid. Please check your file." %
                                             input_type.capitalize())
@@ -891,8 +909,10 @@ class JobManager:
         :param max_upload_size_readable: Human readable max upload size (to show on errors)
         :type max_upload_size_readable: str
         """
+        logger.debug("[job=%s] Download files with pending" % self.id_job)
         with Job.connect():
             status = "getfiles-waiting"
+            logger.debug("[job=%s] Set to %s" % (self.id_job, status))
             if MODE == "webserver":
                 job = Job.get(Job.id_job == self.id_job)
                 job.status = status
@@ -913,14 +933,17 @@ class JobManager:
                     allowed = session.ask_for_upload(True)
                 else:
                     allowed = True
+                logger.debug("[job=%s] Allowed to upload: %s" % (self.id_job, allowed))
                 while not allowed:
                     time.sleep(15)
                     session = Session.get(s_id=s_id)
                     allowed = session.ask_for_upload(False)
+                    logger.debug("[job=%s] Allowed to upload: %s" % (self.id_job, allowed))
                 if allowed:
                     if MODE == "webserver":
                         job.status = "getfiles"
                         job.save()
+                    logger.debug("[job=%s] Set to %s" % (self.id_job, status))
                     for file, input_type in files_to_download:
                         correct, error_set, finale_path, filename = self._getting_file_from_url(file, input_type)
                         if not correct:
@@ -938,12 +961,14 @@ class JobManager:
                         job.batch_type = "local"
                         job.save()
                 else:
+                    logger.warning("[job=%s] Uncorrect file" % self.id_job)
                     correct = False
             except:  # Except all possible exceptions
                 traceback.print_exc()
                 correct = False
                 error_set = False
             if MODE == "webserver":
+                logger.info("[job=%s] Deleting instance" % self.id_job)
                 session.delete_instance()
             self._after_start(correct, error_set)
 
@@ -966,6 +991,7 @@ class JobManager:
             else:
                 job = None
                 self.set_status_standalone(status)
+            logger.info("[job=%s] Set status to %s" % (self.id_job, status))
             correct = True
             should_be_local = True
             max_upload_size_readable = self.config.max_upload_size / 1024 / 1024  # Set it in Mb
@@ -1012,8 +1038,9 @@ class JobManager:
                     return False, True, True
 
             all_downloaded = True
-            if correct :
+            if correct:
                 if len(files_to_download) > 0:
+                    logger.debug("[job=%s] Download remaining files: %s" %(self.id_job, ','.join(files_to_download)))
                     all_downloaded = False
                     thread = threading.Timer(0, self.download_files_with_pending,
                                              kwargs={"files_to_download": files_to_download,
@@ -1023,6 +1050,7 @@ class JobManager:
 
                 elif correct and MODE == "webserver" and job.batch_type != "local" and should_be_local \
                         and self.get_pending_local_number() < self.config.max_run_local:
+                    logger.debug("[job=%s] Switching job to local batch" % self.id_job)
                     job.batch_type = "local"
                     job.save()
         return correct, False, all_downloaded
@@ -1509,12 +1537,14 @@ class JobManager:
                 if self.backup is not None:
                     success = self.unpack_backup()
                     if not success:
+                        logger.error("[job=%s] Backup file is not valid" % self.id_job)
                         self.set_job_status("fail", "Backup file is not valid. If it is unattended, please contact the "
                                                     "support.")
                         if MODE == "webserver" and self.config.send_mail_status:
                             self.send_mail()
                         return False
                 status = "waiting"
+                logger.info("[job=%s] Set status to %s" % (self.id_job, status))
                 if MODE == "webserver":
                     job = Job.get(Job.id_job == self.id_job)
                     job.status = status
@@ -1524,6 +1554,7 @@ class JobManager:
                     self.prepare_data_in_thread()
             else:
                 self._set_analytics_job_status("fail-getfiles")
+                logger.error("[job=%s] %s" % (self.id_job, "fail-getfiles"))
                 if not error_set:
                     status = "fail"
                     error = "<p>Error while getting input files. Please contact the support to report the bug.</p>"
@@ -1542,11 +1573,16 @@ class JobManager:
         Start job: download, check and parse input files
         """
         try:
+            logger.info("[job=%s] Getting files" % self.id_job)
             success, error_set, all_downloaded = self.getting_files()
+            logger.info("[job=%s] Are gotten files successful: %s" % (self.id_job, success))
+            logger.info("[job=%s] Are gotten files all downloaded: %s" % (self.id_job, all_downloaded))
             if not success or all_downloaded:
+                logger.debug("[job=%s] Continue job" % self.id_job)
                 self._after_start(success, error_set)
 
         except Exception:
+            logger.error("[job=%s] Job failed, cleaning: %s" % self.id_job)
             traceback.print_exc()
             error = "<p>An unexpected error has occurred. Please contact the support to report the bug.</p>"
             if MODE == "webserver":
@@ -1567,6 +1603,7 @@ class JobManager:
         if not os.path.exists(self.output_dir):
             os.mkdir(self.output_dir)
         self.set_status_standalone("submitted")
+        logger.debug("[job=%s] Start job in a new thread" % self.id_job)
         thread = threading.Timer(1, self.start_job)
         thread.start()
 
@@ -1574,9 +1611,12 @@ class JobManager:
         """
         Launch a job in webserver mode (asynchronously in a new thread)
         """
+        logger.debug("[job=%s] Trying to connect..." % self.id_job)
         with Job.connect():
+            logger.debug("[job=%s] Connected" % self.id_job)
             j1 = Job.select().where(Job.id_job == self.id_job)
             if len(j1) > 0:
+                logger.warning("[job=%s] job found without result dir, cleaning DB" % self.id_job)
                 print("Old job found without result dir existing: delete it from BDD!")
                 for j11 in j1:
                     j11.delete_instance()
@@ -1585,14 +1625,17 @@ class JobManager:
                                  date_created=datetime.now(), tool=self.tool.name if self.tool is not None else None)
                 job.save()
                 if not os.path.exists(self.output_dir):
+                    logger.debug("[job=%s] Creating output dir %s" % (self.id_job, self.output_dir))
                     os.mkdir(self.output_dir)
                 thread = threading.Timer(1, self.start_job)
+                logger.info("[job=%s] Starting thread" % self.id_job)
                 thread.start()
             else:
                 job = Job.create(id_job=self.id_job, email=self.email, batch_type=self.config.batch_system_type,
                                  date_created=datetime.now(), tool=self.tool.name if self.tool is not None else None,
                                  status="fail")
                 job.save()
+                logger.debug("[job=%s] Failed: %s" % (self.id_job, job))
 
     def set_status_standalone(self, status, error=""):
         """
