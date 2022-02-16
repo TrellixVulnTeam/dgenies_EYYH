@@ -14,6 +14,7 @@ dgenies.result.id_res = null;
 dgenies.result.init = function(id_res) {
     dgenies.result.id_res = id_res;
     dgenies.result.add_to_list();
+    dgenies.result.update_nb_lines();
     d3.boxplot.init();
 };
 
@@ -48,3 +49,15 @@ dgenies.result.remove_job_from_cookie = function(job) {
         dgenies.update_results(cookies);
     }
 };
+
+/**
+ * Update selected nb_lines displayed in form
+ */
+dgenies.result.update_nb_lines = function() {
+    $( "#nb_lines_range" ).change(function() {
+        $( "[name='nb_lines']" ).val($( "#nb_lines_range" ).val());
+    });
+    $( "#nb_lines_number" ).change(function() {
+        $( "[name='nb_lines']" ).val($( "#nb_lines_number" ).val());
+    });
+}

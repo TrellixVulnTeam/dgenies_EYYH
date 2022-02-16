@@ -67,12 +67,15 @@
             <div id="legend">
                 <div class="title">
                     Legend&nbsp<span class="glyphicon glyphicon-question-sign" style="color: #2aabd2"
-                                     title="Click to know how identity is computed"
+                                     title="Click to know how similarity is computed"
                                      onclick="location='/documentation/result#identity'"></span>
                 </div>
                 <div class="draw"></div>
             </div>
             <form id="form-parameters">
+                <p><label>Display first matches:<br/>
+                <input type="range" id="nb_lines_range" name="nb_lines" min="0" max="{{ max_nb_lines }}" value="{{ default_nb_lines }}" step="1"/>
+                <input type="number" id="nb_lines_number" name="nb_lines" value="{{ default_nb_lines }}" min="0" max="{{ max_nb_lines }}"></label></p>
                 <p><label>Filter small matches:<br/>
                 <input type="range" min="0" max="6" value="0" step="1" id="filter_size"/></label></p>
                 <p><label>Min identity (abs):<br/>
