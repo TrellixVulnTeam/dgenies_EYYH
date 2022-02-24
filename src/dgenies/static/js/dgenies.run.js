@@ -284,6 +284,13 @@ dgenies.run.show_tool_options = function(tool) {
     }
 };
 
+
+dgenies.run.change_slider_text = function(x) {
+  //console.log($(`${x}`))
+  //console.log($(`${x}-text`)[0].textContent)
+  $(`${x}-text`)[0].textContent = dgenies.run.tool_options[x][$(`${x}`).val()];
+}
+
 /**
  * Initialise events
  */

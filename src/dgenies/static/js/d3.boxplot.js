@@ -32,13 +32,20 @@ d3.boxplot.scale = 1000;
 d3.boxplot.content_lines_width = d3.boxplot.scale / 400;
 d3.boxplot.break_lines_width = d3.boxplot.scale / 1500;
 d3.boxplot.color_idy_theme = "default";
-d3.boxplot.color_idy_themes = ["default", "colorblind", "black&white", "r_default", "r_colorblind", "allblack"];
+d3.boxplot.color_idy_themes = ["default", "viridis", "colorblind", "black&white", "r_default", "r_colorblind", "allblack"];
 d3.boxplot.color_idy = {
     "default": {
         "3": "#094b09",
         "2": "#2ebd40",
         "1": "#d5670b",
         "0": "#ffd84b",
+        "-1": "#fff"
+    },
+    "viridis": {
+        "3": "#440154",
+        "2": "#31688E",
+        "1": "#35B779",
+        "0": "#FDE725",
         "-1": "#fff"
     },
     "colorblind": {
@@ -161,6 +168,8 @@ d3.boxplot.launch = function(res, update=false, noise_change=false) {
     }
 
     d3.boxplot.lines = res["lines"];
+    d3.boxplot.lines_order = res["lines_order"];
+
     d3.boxplot.x_len = res["x_len"];
     d3.boxplot.y_len = res["y_len"];
     d3.boxplot.min_idy = res["min_idy"];
@@ -181,6 +190,16 @@ d3.boxplot.launch = function(res, update=false, noise_change=false) {
     if (res["sampled"]) {
         let max_nb_lines = dgenies.numberWithCommas(res["max_nb_lines"].toString());
         dgenies.notify(`<div style="text-align: center"><b>There are too much matches.\nOnly the ${max_nb_lines} best matches are displayed</b></div>`)
+    } else {
+        // We get the number of lines to draw
+        let max_nb_lines = Object.keys(d3.boxplot.lines).map(
+            function(key){
+                return d3.boxplot.lines[key].length;
+            }).reduce(function (result, elem) {
+                return result + elem;
+            }, 0);
+        $("[name='nb_lines']").prop('max', max_nb_lines)
+        $("[name='nb_lines']").val(Math.min(max_nb_lines, $("[name='nb_lines']").val()))
     }
     d3.boxplot.mousetip.init();
 };
@@ -699,7 +718,7 @@ d3.boxplot._sort_color_idy = function(a, b) {
 /**
  * Draw legend
  */
-d3.boxplot.draw_legend = function () {
+d3.boxplot.draw_legend = function (label = "Similarity") {
     d3.select("#legend .draw").html(""); //Empty legend
     let color_idy = d3.boxplot.color_idy[d3.boxplot.color_idy_theme];
     let color_idy_len = Object.keys(color_idy).length;
@@ -745,7 +764,7 @@ d3.boxplot.draw_legend = function () {
         .attr("font-family", "sans-serif")
         .attr("font-size", "11.5pt")
         .attr("font-weight", "bold")
-        .text("Identity")
+        .text(label)
 
 };
 
@@ -877,6 +896,38 @@ d3.boxplot.change_color_theme = function (theme) {
 };
 
 /**
+ * Count each occurrence of elem in array
+ *
+ * @param {array} an array
+ * @returns {object} a dict where key is element and value the count
+ */
+d3.boxplot._counter = function (array) {
+  let count = {};
+  array.forEach(val => count[val] = (count[val] || 0) + 1);
+  return count;
+}
+
+
+d3.boxplot._filter_lines = function (lines = d3.boxplot.lines, lines_order = d3.boxplot.lines_order) {
+
+    let selected_nb_lines = $("[name='nb_lines']").val();
+    let nb_lines = Object.keys(lines).map(
+        function(key){
+            return lines[key].length;
+        }).reduce(function (result, elem) {
+            return result + elem;
+        }, 0);
+    let nb_selected = d3.boxplot._counter(d3.boxplot.lines_order.slice(0, Math.min(nb_lines, selected_nb_lines)))
+
+    let new_lines = {};
+    for (const k in Object.keys(d3.boxplot.lines)) {
+        new_lines[k] = lines[k].slice(0, nb_selected[k]);
+    }
+    return new_lines;
+}
+
+
+/**
  * Draw matches on dot plot
  *
  * @param {object} lines matches definition
@@ -884,7 +935,6 @@ d3.boxplot.change_color_theme = function (theme) {
  * @param {number} y_len total len of query
  */
 d3.boxplot.draw_lines = function (lines=d3.boxplot.lines, x_len=d3.boxplot.x_len, y_len=d3.boxplot.y_len) {
-
     //Remove old lines (if any):
     $("path.content-lines").remove();
 

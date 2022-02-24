@@ -356,6 +356,8 @@ def result(id_res):
     """
     res_dir = os.path.join(APP_DATA, id_res)
     return render_template("result.html", id=id_res, menu="result", current_result=id_res,
+                           max_nb_lines=config_reader.max_nb_lines,
+                           default_nb_lines=min(config_reader.default_nb_lines, config_reader.max_nb_lines),
                            is_gallery=Functions.is_in_gallery(id_res, MODE),
                            fasta_file=Functions.query_fasta_file_exists(res_dir))
 

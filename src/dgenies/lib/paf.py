@@ -59,6 +59,7 @@ class Paf:
         self.min_idy = None
         self.max_idy = None
         self.lines = {}
+        self.lines_order = []
         self.q_contigs = {}
         self.q_order = []
         self.t_contigs = {}
@@ -196,6 +197,8 @@ class Paf:
             "2": [],  # idy < 0.75
             "3": []  # idy > 0.75
         }
+        # lines_order will be used to keep track of line order. It will tell in which 'idy' the next line is in 'lines'
+        lines_order = []
         try:
             name_q, q_order, q_contigs, q_reversed, q_abs_start, len_q = Index.load(self.idx_q)
             self.q_abs_start = q_abs_start
@@ -254,6 +257,7 @@ class Paf:
                         class_idy = "2"
                     else:
                         class_idy = "3"
+                    lines_order.append(class_idy)
                     lines[class_idy].append([x1, x2, y1, y2, idy, v1, v6])
         except IOError:
             self.error = "PAF file does not exist!"
@@ -278,6 +282,7 @@ class Paf:
         self.min_idy = min_idy
         self.max_idy = max_idy
         self.lines = lines
+        self.lines_order = lines_order
         self.q_contigs = q_contigs
         self.q_order = q_order
         self.q_reversed = q_reversed
@@ -297,6 +302,7 @@ class Paf:
             * min_idy: minimum of identity (float)
             * max_idy: maximum of identity (float)
             * lines: matches lines, by class of identity (dict)
+            * lines_order: class of identity of each line (list)
             * y_contigs: query contigs definitions (dict)
             * y_order: query contigs order (list)
             * x_contigs: target contigs definitions (dict)
@@ -312,6 +318,7 @@ class Paf:
             'min_idy': self.min_idy,
             'max_idy': self.max_idy,
             'lines': self.lines,
+            'lines_order': self.lines_order,
             'y_contigs': self.q_contigs,
             'y_order': self.q_order,
             'x_contigs': self.t_contigs,
@@ -355,7 +362,7 @@ class Paf:
         max_len = lines[0][-1]
         i = 0
 
-        # Select samples of tested lines such that:
+        # Select sample of tested lines such that:
         # - a selected line is at least 10% of the longest line
         # - and a selected line is at least 1% of the length of contig or the length of chrom
         while i < len(lines) and lines[i][-1] > max_len * 0.1 \
